@@ -53,24 +53,42 @@ typedef int __pid_t;
 #endif
 
 #ifndef __machine_dev_t_defined
+#if defined(__riscv) && (__riscv_xlen == 64)
+typedef __uint64_t __dev_t;
+#else
 typedef short __dev_t;
+#endif
 #endif
 
 #ifndef __machine_uid_t_defined
+#if defined(__riscv) && (__riscv_xlen == 64)
+typedef __uint64_t __uid_t;
+#else
 typedef unsigned short __uid_t;
 #endif
+#endif
 #ifndef __machine_gid_t_defined
+#if defined(__riscv) && (__riscv_xlen == 64)
+typedef __uint64_t __gid_t;
+#else
 typedef unsigned short __gid_t;
+#endif
 #endif
 
 #ifndef __machine_id_t_defined
+#if defined(__riscv) && (__riscv_xlen == 64)
+typedef __uint64_t __id_t;
+#else
 typedef __uint32_t __id_t;
+#endif
 #endif
 
 #ifndef __machine_ino_t_defined
 #if (defined(__i386__) && (defined(GO32) || defined(__MSDOS__))) || \
     defined(__sparc__) || defined(__SPU__)
 typedef unsigned long __ino_t;
+#elif defined(__riscv) && (__riscv_xlen == 64)
+typedef __uint64_t __ino_t;
 #else
 typedef unsigned short __ino_t;
 #endif
@@ -210,7 +228,11 @@ typedef	__uint32_t	__socklen_t;
 #endif
 
 typedef	int		__nl_item;
+#if defined(__riscv) && (__riscv_xlen == 64)
+typedef	__uint64_t	__nlink_t;
+#else
 typedef	unsigned short	__nlink_t;
+#endif
 typedef	long		__suseconds_t;	/* microseconds (signed) */
 typedef	unsigned long	__useconds_t;	/* microseconds (unsigned) */
 

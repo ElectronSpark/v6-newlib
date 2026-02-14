@@ -1,0 +1,97 @@
+# generated for user/libc newlib support
+#include "kernel/inc/syscall.h"
+
+#define SYSCALL(name) \
+.global name;         \
+name:                 \
+ li a7, SYS_##name;   \
+ ecall;               \
+ ret
+
+#define SYSCALL_ALIAS(sym, nr) \
+.global sym;                  \
+sym:                          \
+ li a7, SYS_##nr;             \
+ ecall;                       \
+ ret
+
+SYSCALL(clone)
+SYSCALL(vfork)
+SYSCALL(exit)
+SYSCALL(wait)
+SYSCALL(pipe)
+SYSCALL(read)
+SYSCALL(write)
+SYSCALL(close)
+SYSCALL(kill)
+SYSCALL(exec)
+SYSCALL(open)
+SYSCALL(mknod)
+SYSCALL(unlink)
+SYSCALL(readlink)
+SYSCALL(link)
+SYSCALL(symlink)
+SYSCALL(mkdir)
+SYSCALL(chdir)
+SYSCALL(dup)
+SYSCALL(dup2)
+SYSCALL(lseek)
+SYSCALL(fcntl)
+SYSCALL(access)
+SYSCALL(rename)
+SYSCALL(ftruncate)
+SYSCALL(getpid)
+SYSCALL(getppid)
+SYSCALL(gettid)
+SYSCALL(getrandom)
+SYSCALL(exit_group)
+SYSCALL(tgkill)
+SYSCALL(tkill)
+SYSCALL(sbrk)
+SYSCALL(sleep)
+SYSCALL(nanosleep)
+SYSCALL(uptime)
+SYSCALL(gettimeofday)
+SYSCALL(waitpid)
+SYSCALL(uname)
+SYSCALL(sigaction)
+SYSCALL(sigalarm)
+SYSCALL(sigreturn)
+SYSCALL(sigpending)
+SYSCALL(sigprocmask)
+SYSCALL(sigsuspend)
+SYSCALL(sigwait)
+SYSCALL(pause)
+SYSCALL(mmap)
+SYSCALL(munmap)
+SYSCALL(mprotect)
+SYSCALL(mremap)
+SYSCALL(msync)
+SYSCALL(mincore)
+SYSCALL(madvise)
+SYSCALL(getdents)
+SYSCALL(chroot)
+SYSCALL(mount)
+SYSCALL(umount)
+SYSCALL(getcwd)
+SYSCALL(memstat)
+SYSCALL(dumpproc)
+SYSCALL(dumpchan)
+SYSCALL(dumppcache)
+SYSCALL(dumprq)
+SYSCALL(kernbase)
+SYSCALL(dumpinode)
+SYSCALL(ioctl)
+SYSCALL(tcgetattr)
+SYSCALL(tcsetattr)
+SYSCALL(setpgid)
+SYSCALL(getpgid)
+SYSCALL(setsid)
+SYSCALL(getsid)
+SYSCALL(sync)
+
+# Private syscall entry points for newlib wrappers.
+# Keep public stat/fstat/lstat resolved to libc wrapper functions.
+SYSCALL_ALIAS(__xv6_fstat, fstat)
+SYSCALL_ALIAS(__xv6_stat, stat)
+SYSCALL_ALIAS(__xv6_lstat, lstat)
