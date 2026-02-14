@@ -92,6 +92,7 @@ SYSCALL(sync)
 
 # Private syscall entry points for newlib wrappers.
 # Keep public stat/fstat/lstat resolved to libc wrapper functions.
+SYSCALL_ALIAS(__xv6_poll, poll)
 SYSCALL_ALIAS(__xv6_fstat, fstat)
 SYSCALL_ALIAS(__xv6_stat, stat)
 SYSCALL_ALIAS(__xv6_lstat, lstat)

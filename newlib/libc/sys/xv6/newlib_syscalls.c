@@ -73,6 +73,7 @@ extern int _xv6_getppid(void) __asm__("getppid");
 extern int _xv6_uname(void *buf) __asm__("uname");
 extern uint64_t _xv6_uptime(void) __asm__("uptime");
 extern int _xv6_ioctl(int fd, int request, uint64_t arg) __asm__("ioctl");
+extern int _xv6_poll(void *fds, int nfds, int timeout) __asm__("__xv6_poll");
 
 /* getrandom is provided by usys.S syscall stub */
 extern ssize_t getrandom(void *buf, size_t buflen, unsigned int flags);
@@ -1241,42 +1242,17 @@ struct pollfd {
  * Simplified implementation: assumes all valid fds are ready.
  */
 int poll(struct pollfd *fds, unsigned long nfds, int timeout) {
-    if (fds == NULL && nfds > 0) {
-        errno = EFAULT;
+    if (nfds > (unsigned long)INT_MAX) {
+        errno = EINVAL;
         return -1;
     }
-    
-    int count = 0;
-    
-    for (unsigned long i = 0; i < nfds; i++) {
-        fds[i].revents = 0;
-        
-        if (fds[i].fd < 0) {
-            continue;  /* Negative fd means ignore */
-        }
-        
-        /* Assume fd is ready for requested operations */
-        if (fds[i].events & (POLLIN | POLLRDNORM)) {
-            fds[i].revents |= (fds[i].events & (POLLIN | POLLRDNORM));
-        }
-        if (fds[i].events & (POLLOUT | POLLWRNORM)) {
-            fds[i].revents |= (fds[i].events & (POLLOUT | POLLWRNORM));
-        }
-        
-        if (fds[i].revents) {
-            count++;
-        }
+
+    int ret = _xv6_poll((void *)fds, (int)nfds, timeout);
+    if (ret < 0) {
+        errno = -ret;
+        return -1;
     }
-    
-    /* If nothing ready and timeout > 0, sleep */
-    if (count == 0 && timeout > 0) {
-        struct timespec ts;
-        ts.tv_sec = timeout / 1000;
-        ts.tv_nsec = (timeout % 1000) * 1000000L;
-        _xv6_nanosleep(&ts, NULL);
-    }
-    
-    return count;
+    return ret;
 }
 
 /* ============================================================================

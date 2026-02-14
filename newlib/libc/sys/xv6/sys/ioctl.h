@@ -18,6 +18,14 @@ int ioctl(int fd, unsigned long request, ...);
 #define FIONREAD 0x541B
 #endif
 
+#ifndef TCFLSH
+#define TCFLSH 0x540B
+#endif
+
+#ifndef TIOCFLUSH
+#define TIOCFLUSH TCFLSH
+#endif
+
 #ifdef __cplusplus
 }
 #endif

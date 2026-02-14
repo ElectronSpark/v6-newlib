@@ -39,6 +39,7 @@ endif()
 # Source files for newlib syscall stubs
 set(NEWLIB_SYSCALLS_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/newlib_syscalls.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/compat_ncurses.c
     ${CMAKE_CURRENT_SOURCE_DIR}/pthread.c
 )
 
