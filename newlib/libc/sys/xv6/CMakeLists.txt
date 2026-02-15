@@ -103,5 +103,31 @@ target_compile_options(${NEWLIB_SYSCALLS_LIB} PRIVATE
     "SHELL:-isystem ${NEWLIB_INCLUDE_DIR}"
 )
 
+# Build a standalone libpthread.a for ports/configure checks expecting -lpthread.
+add_library(xv6_pthread STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/pthread.c
+    ${NEWLIB_ASM_SRC}
+)
+
+set_target_properties(xv6_pthread PROPERTIES
+    OUTPUT_NAME pthread
+    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    INCLUDE_DIRECTORIES ""
+)
+
+target_compile_options(xv6_pthread PRIVATE
+    -nostdinc
+    -ffreestanding
+    -fno-builtin
+    -D_POSIX_THREADS=200809L
+    "SHELL:-I ${CMAKE_SOURCE_DIR}"
+    "SHELL:-isystem ${CMAKE_CURRENT_SOURCE_DIR}"
+    "SHELL:-isystem ${GCC_INCLUDE_DIR}"
+    "SHELL:-isystem ${NEWLIB_TOP_INCLUDE_DIR}"
+    "SHELL:-isystem ${NEWLIB_INCLUDE_DIR}"
+)
+
+add_dependencies(xv6_pthread crt0_obj)
+
 # Export the include path for newlib programs (for sys/dirent.h, etc.)
 set(NEWLIB_LIBC_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR} PARENT_SCOPE)

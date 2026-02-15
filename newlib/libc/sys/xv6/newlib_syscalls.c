@@ -36,6 +36,7 @@ int errno;
  * xv6 uses UTC, no timezone offset or daylight saving time
  */
 long timezone = 0;
+int daylight = 0;
 
 /* 
  * xv6 syscall wrappers - these are assembly stubs from usys.S
@@ -515,7 +516,7 @@ clock_t _times(struct tms *buf) {
 #define XV6_CLOCK_MONOTONIC_RAW      5
 #define XV6_CLOCK_MONOTONIC_COARSE   6
 
-int clock_gettime(int clk_id, struct timespec *tp) {
+int clock_gettime(clockid_t clk_id, struct timespec *tp) {
     if (tp == NULL) {
         errno = EFAULT;
         return -1;
@@ -555,7 +556,7 @@ int clock_gettime(int clk_id, struct timespec *tp) {
 }
 
 /* clock_getres - get clock resolution */
-int clock_getres(int clk_id, struct timespec *res) {
+int clock_getres(clockid_t clk_id, struct timespec *res) {
     if (res == NULL) {
         return 0;  /* NULL is allowed per POSIX */
     }
@@ -697,6 +698,8 @@ int _chmod(const char *path, mode_t mode) { (void)path; (void)mode; return 0; }
 int _fchmod(int fd, mode_t mode) { (void)fd; (void)mode; return 0; }
 int _setuid(uid_t uid) { (void)uid; return 0; }
 int _setgid(gid_t gid) { (void)gid; return 0; }
+int fsync(int fd) { (void)fd; return 0; }
+int fdatasync(int fd) { (void)fd; return 0; }
 
 /*
  * Note: getrandom is now provided by usys.S as a syscall stub.
@@ -736,36 +739,6 @@ int _sigaction(int signum, const void *act, void *oldact) {
 
 int _sigprocmask(int how, const void *set, void *oldset) {
     return _xv6_sigprocmask(how, (const uint64_t *)set, (uint64_t *)oldset);
-}
-
-/* sigset manipulation functions - these are pure user-space */
-int sigemptyset(void *set) {
-    if (set == 0) return -1;
-    *(uint64_t *)set = 0;
-    return 0;
-}
-
-int sigfillset(void *set) {
-    if (set == 0) return -1;
-    *(uint64_t *)set = ~((uint64_t)0);
-    return 0;
-}
-
-int sigaddset(void *set, int signum) {
-    if (set == 0 || signum < 1 || signum > 64) return -1;
-    *(uint64_t *)set |= ((uint64_t)1 << (signum - 1));
-    return 0;
-}
-
-int sigdelset(void *set, int signum) {
-    if (set == 0 || signum < 1 || signum > 64) return -1;
-    *(uint64_t *)set &= ~((uint64_t)1 << (signum - 1));
-    return 0;
-}
-
-int sigismember(const void *set, int signum) {
-    if (set == 0 || signum < 1 || signum > 64) return -1;
-    return (*(const uint64_t *)set >> (signum - 1)) & 1;
 }
 
 /* signal() is a simplified wrapper around sigaction */
@@ -1216,6 +1189,25 @@ int select(int nfds, fd_set *readfds, fd_set *writefds,
     }
     
     return count;
+}
+
+/*
+ * pselect - synchronous I/O multiplexing (POSIX)
+ *
+ * Thin wrapper around select() for readline compatibility.
+ * Ignores the signal mask (sigmask) since xv6 signal support is minimal.
+ */
+int pselect(int nfds, fd_set *readfds, fd_set *writefds,
+            fd_set *exceptfds, const struct timespec *timeout,
+            const sigset_t *sigmask) {
+    (void)sigmask;
+    struct timeval tv, *tvp = NULL;
+    if (timeout) {
+        tv.tv_sec = timeout->tv_sec;
+        tv.tv_usec = timeout->tv_nsec / 1000;
+        tvp = &tv;
+    }
+    return select(nfds, readfds, writefds, exceptfds, tvp);
 }
 
 /* poll structures - use our own since newlib may not have poll.h */

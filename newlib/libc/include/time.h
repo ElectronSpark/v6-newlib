@@ -138,6 +138,8 @@ int		getdate_r (const char *, struct tm *);
 #if __SVID_VISIBLE || __XSI_VISIBLE
 extern __IMPORT long _timezone;
 extern __IMPORT int _daylight;
+extern __IMPORT long timezone;
+extern __IMPORT int daylight;
 #endif
 #if __POSIX_VISIBLE
 extern __IMPORT char *_tzname[2];
@@ -160,7 +162,7 @@ extern __IMPORT char *_tzname[2];
 
 #if defined(_POSIX_TIMERS)
 
-#include <signal.h>
+#include <sys/signal.h>
 
 #ifdef __cplusplus
 extern "C" {

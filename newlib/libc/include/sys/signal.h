@@ -116,6 +116,12 @@ struct sigaction {
 #else /* defined(__rtems__) */
 
 #define SA_NOCLDSTOP 1  /* only value supported now for sa_flags */
+#ifndef SA_NODEFER
+#define SA_NODEFER   2
+#endif
+#ifndef SA_RESTART
+#define SA_RESTART   4
+#endif
 
 typedef void (*_sig_func_ptr)(int);
 
@@ -383,6 +389,6 @@ int str2sig(const char *__restrict, int *__restrict);
 #ifndef _SIGNAL_H_
 /* Some applications take advantage of the fact that <sys/signal.h>
  * and <signal.h> are equivalent in glibc.  Allow for that here.  */
-#include <signal.h>
+#include "../signal.h"
 #endif
 #endif /* _SYS_SIGNAL_H */

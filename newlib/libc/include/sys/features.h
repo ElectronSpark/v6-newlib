@@ -334,6 +334,21 @@ extern "C" {
 #define	__POSIX_VISIBLE		0
 #endif
 
+/*
+ * For non-Cygwin targets, expose key POSIX timer feature macros based on the
+ * selected POSIX profile. Some public headers (for example <time.h>) gate
+ * declarations such as clock_gettime()/clock_getres() and CLOCK_MONOTONIC on
+ * these macros.
+ */
+#ifndef __CYGWIN__
+#if __POSIX_VISIBLE >= 199309 && !defined(_POSIX_TIMERS)
+#define _POSIX_TIMERS				__POSIX_VISIBLE
+#endif
+#if __POSIX_VISIBLE >= 200112 && !defined(_POSIX_MONOTONIC_CLOCK)
+#define _POSIX_MONOTONIC_CLOCK			__POSIX_VISIBLE
+#endif
+#endif
+
 #ifdef _DEFAULT_SOURCE
 #define	__SVID_VISIBLE		1
 #else

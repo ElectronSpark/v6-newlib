@@ -162,6 +162,10 @@ int	lstat (const char *__restrict __path, struct stat *__restrict __buf );
 int	mknod (const char *__path, mode_t __mode, dev_t __dev );
 #endif
 
+#if !defined(__CYGWIN__) && !defined(__rtems__) && !defined(__SPU__)
+int	lstat (const char *__restrict __path, struct stat *__restrict __buf );
+#endif
+
 #if __ATFILE_VISIBLE
 int	fchmodat (int, const char *, mode_t, int);
 int	fstatat (int, const char *__restrict , struct stat *__restrict, int);

@@ -1,85 +1,29 @@
 /*
  * pthread.c - POSIX threads implementation for xv6
- * 
- * Uses xv6's clone() syscall with CLONE_VM to create true threads.
- * 
- * This file avoids including newlib headers to prevent type conflicts
- * with kernel headers. It uses matching type definitions.
+ *
+ * Keep ABI/types aligned with newlib headers.
  */
 
-/* Basic type definitions matching newlib and the kernel */
-typedef unsigned long size_t;
-typedef long ssize_t;
-typedef unsigned int uint32_t;
-typedef unsigned long uint64_t;
-typedef int int32_t;
-typedef int pid_t;
+#include <pthread.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <errno.h>
 
-/* Pthread types matching newlib's definitions */
-typedef uint32_t pthread_t;
-typedef uint32_t pthread_mutex_t;
-typedef uint32_t pthread_cond_t;
-typedef uint32_t pthread_key_t;
+#ifndef PTHREAD_MUTEX_NORMAL
+#define PTHREAD_MUTEX_NORMAL 0
+#endif
 
-/* Pthread attribute types - newlib defines these as structs */
-typedef struct {
-    int is_initialized;
-    void *stackaddr;
-    int stacksize;
-    int contentionscope;
-    int inheritsched;
-    int schedpolicy;
-    int detachstate;
-} pthread_attr_t;
+typedef unsigned long sigset_t;
 
-typedef struct {
-    int is_initialized;
-    int process_shared;
-} pthread_mutexattr_t;
-
-typedef struct {
-    int is_initialized;
-    int process_shared;
-} pthread_condattr_t;
-
-typedef struct {
-    int is_initialized;
-} pthread_once_t;
-
-/* Timespec for nanosleep */
-struct timespec {
-    long tv_sec;
-    long tv_nsec;
-};
-
-/* Constants */
-#define NULL ((void *)0)
-#define EINVAL 22
-#define EAGAIN 11
-#define ENOMEM 12
-#define ESRCH  3
-#define EBUSY  16
-#define ENOTSUP 95
-
-#define PTHREAD_CREATE_JOINABLE 1
-#define PTHREAD_CREATE_DETACHED 0
-#define PTHREAD_CANCEL_ENABLE   0
-#define PTHREAD_CANCEL_DISABLE  1
-#define PTHREAD_CANCEL_DEFERRED 0
-#define PTHREAD_CANCEL_ASYNCHRONOUS 1
-#define PTHREAD_SCOPE_SYSTEM    0
-#define PTHREAD_SCOPE_PROCESS   1
-#define PTHREAD_MUTEX_NORMAL    0
-#define PTHREAD_MUTEX_INITIALIZER 0xFFFFFFFF
-#define PTHREAD_COND_INITIALIZER  0xFFFFFFFF
-
-/* External functions - declared to avoid header conflicts */
 extern void *memset(void *s, int c, size_t n);
 extern void *malloc(size_t size);
 extern void free(void *ptr);
 extern pid_t getpid(void);
-extern void _exit(int status) __attribute__((noreturn));
 extern int waitpid(pid_t pid, int *status, int options);
+
+/* Constants */
+/* External syscall not declared by newlib */
+extern void _exit(int status) __attribute__((noreturn));
 extern int nanosleep(const struct timespec *req, struct timespec *rem);
 
 /* Clone flags - must match kernel/inc/clone_flags.h */
@@ -88,7 +32,9 @@ extern int nanosleep(const struct timespec *req, struct timespec *rem);
 #define CLONE_SIGHAND       0x0200000000ULL  /* Share signal handlers */
 #define CLONE_FILES         0x00100000ULL    /* Share file descriptor table */
 #define CLONE_FS            0x00200000ULL    /* Share filesystem info */
+#ifndef SIGCHLD
 #define SIGCHLD             17
+#endif
 
 /* Clone args structure - must match kernel */
 struct clone_args {
@@ -523,14 +469,16 @@ void *pthread_getspecific(pthread_key_t key) {
  */
 int pthread_once(pthread_once_t *once_control, void (*init_routine)(void)) {
     if (!once_control || !init_routine) return EINVAL;
-    
-    volatile int *flag = (volatile int *)once_control;
-    
-    if (__sync_bool_compare_and_swap(flag, 0, 1)) {
+
+    if (!once_control->is_initialized)
+        return EINVAL;
+
+    if (__sync_bool_compare_and_swap(&once_control->init_executed, 0, 1)) {
         init_routine();
-        *flag = 2;
+        __sync_synchronize();
+        once_control->init_executed = 2;
     } else {
-        while (*flag == 1) {
+        while (once_control->init_executed == 1) {
             /* spin */
         }
     }
@@ -703,7 +651,7 @@ int pthread_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(vo
     return 0;
 }
 
-int pthread_sigmask(int how, const void *set, void *oldset) {
+int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset) {
     (void)how;
     (void)set;
     (void)oldset;

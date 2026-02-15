@@ -141,6 +141,15 @@ static inline void cfmakeraw(struct termios *t) {
 int tcgetattr(int fd, struct termios *termios_p);
 int tcsetattr(int fd, int optional_actions, const struct termios *termios_p);
 
+/* Stubs for POSIX termios functions not fully implemented in xv6 */
+static inline int tcflow(int fd, int action) { (void)fd; (void)action; return 0; }
+static inline int tcdrain(int fd) { (void)fd; return 0; }
+static inline int tcflush(int fd, int queue_selector) { (void)fd; (void)queue_selector; return 0; }
+static inline speed_t cfgetospeed(const struct termios *t) { return t->c_ospeed; }
+static inline int cfsetospeed(struct termios *t, speed_t s) { t->c_ospeed = s; return 0; }
+static inline speed_t cfgetispeed(const struct termios *t) { return t->c_ispeed; }
+static inline int cfsetispeed(struct termios *t, speed_t s) { t->c_ispeed = s; return 0; }
+
 #ifdef __cplusplus
 }
 #endif

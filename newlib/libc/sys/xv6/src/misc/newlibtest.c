@@ -52,8 +52,8 @@ extern int munmap(void *addr, size_t length);
 #ifndef CLOCK_MONOTONIC
 #define CLOCK_MONOTONIC 4
 #endif
-extern int clock_gettime(int clk_id, struct timespec *tp);
-extern int clock_getres(int clk_id, struct timespec *res);
+extern int clock_gettime(clockid_t clk_id, struct timespec *tp);
+extern int clock_getres(clockid_t clk_id, struct timespec *res);
 
 /* select/poll - use newlib's definitions */
 #include <sys/select.h>
