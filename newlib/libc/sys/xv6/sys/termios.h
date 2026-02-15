@@ -58,7 +58,9 @@ extern "C" {
 #define ECHOE 0x0010
 #define ECHOK 0x0020
 #define ECHONL 0x0040
+#define NOFLSH 0x0080
 #define IEXTEN 0x0100
+#define TOSTOP 0x0200
 
 /* tcsetattr optional_actions */
 #define TCSANOW 0

@@ -76,6 +76,24 @@ extern uint64_t _xv6_uptime(void) __asm__("uptime");
 extern int _xv6_ioctl(int fd, int request, uint64_t arg) __asm__("ioctl");
 extern int _xv6_poll(void *fds, int nfds, int timeout) __asm__("__xv6_poll");
 
+/* Network / socket syscalls (assembly stubs in usys.S, prefixed __xv6_*) */
+extern int _xv6_socket(int domain, int type, int protocol) __asm__("__xv6_socket");
+extern int _xv6_bind(int fd, const void *addr, int addrlen) __asm__("__xv6_bind");
+extern int _xv6_listen(int fd, int backlog) __asm__("__xv6_listen");
+extern int _xv6_accept(int fd, void *addr, void *addrlen) __asm__("__xv6_accept");
+extern int _xv6_sconnect(int fd, const void *addr, int addrlen) __asm__("__xv6_sconnect");
+extern int _xv6_sendto(int fd, const void *buf, int len, int flags,
+                        const void *dest_addr, int addrlen) __asm__("__xv6_sendto");
+extern int _xv6_recvfrom(int fd, void *buf, int len, int flags,
+                          void *src_addr, void *addrlen) __asm__("__xv6_recvfrom");
+extern int _xv6_setsockopt(int fd, int level, int optname,
+                            const void *optval, int optlen) __asm__("__xv6_setsockopt");
+extern int _xv6_getsockopt(int fd, int level, int optname,
+                            void *optval, void *optlen) __asm__("__xv6_getsockopt");
+extern int _xv6_shutdown(int fd, int how) __asm__("__xv6_shutdown");
+extern int _xv6_getpeername(int fd, void *addr, void *addrlen) __asm__("__xv6_getpeername");
+extern int _xv6_getsockname(int fd, void *addr, void *addrlen) __asm__("__xv6_getsockname");
+
 /* getrandom is provided by usys.S syscall stub */
 extern ssize_t getrandom(void *buf, size_t buflen, unsigned int flags);
 
@@ -1132,9 +1150,23 @@ int clearenv(void) {
  * ============================================================================
  * 
  * These provide basic implementations for CPython compatibility.
- * Without kernel support, we provide simplified behavior:
- * - Check if any file descriptors are ready (non-blocking check)
- * - If timeout is specified and nothing is ready, sleep and return 0
+ * Without full kernel poll/select support, we approximate:
+ *
+ * - timeout == NULL  (blocking): report all requested fds as ready and
+ *   return immediately.  The caller (e.g. CPython readline loop) will
+ *   then call read() which properly blocks in the kernel.
+ *
+ * - timeout == {0,0} (poll / non-blocking check): return 0 and clear
+ *   the fd_sets.  We cannot actually check whether data is waiting,
+ *   so the safe answer is "nothing ready".  This is critical for GNU
+ *   readline's typeahead optimisation (_rl_input_queued), which polls
+ *   with timeout=0 to see if more characters are available.  If we
+ *   lied and said "ready", readline would call read() expecting data
+ *   and block — preventing the display refresh that shows the character
+ *   the user just typed.
+ *
+ * - timeout > 0 (timed wait): sleep for the requested duration, then
+ *   return 0 (timeout expired, nothing ready).
  */
 
 /* Use newlib's fd_set definition from sys/select.h */
@@ -1142,11 +1174,6 @@ int clearenv(void) {
 
 /*
  * select - synchronous I/O multiplexing
- * 
- * Simplified implementation:
- * - For timeout=0 (poll mode), immediately return with all fds "ready"
- * - For timeout>0, sleep for the timeout and return 0 (timeout)
- * - This allows CPython to function, though not with true I/O multiplexing
  */
 int select(int nfds, fd_set *readfds, fd_set *writefds, 
            fd_set *exceptfds, struct timeval *timeout) {
@@ -1156,35 +1183,49 @@ int select(int nfds, fd_set *readfds, fd_set *writefds,
         errno = EINVAL;
         return -1;
     }
-    
-    /* Count ready fds - we assume all requested fds are "ready" */
-    int count = 0;
-    
-    /* For read fds: assume ready if valid fd */
-    if (readfds) {
-        for (int fd = 0; fd < nfds; fd++) {
-            if (FD_ISSET(fd, readfds)) {
-                count++;
-            }
-        }
-    }
-    
-    /* For write fds: assume always ready */
-    if (writefds) {
-        for (int fd = 0; fd < nfds; fd++) {
-            if (FD_ISSET(fd, writefds)) {
-                count++;
-            }
-        }
-    }
-    
-    /* If no fds and we have a timeout, sleep */
-    if (count == 0 && timeout) {
+
+    /*
+     * If a timeout is specified (non-NULL), we cannot truly check whether
+     * any fd has data ready without kernel support.  Handle the two cases:
+     *
+     *   timeout == {0,0}  →  pure poll, return 0 immediately
+     *   timeout >  0      →  sleep for the duration, then return 0
+     *
+     * In both cases, clear the fd_sets to indicate "nothing ready".
+     */
+    if (timeout) {
         if (timeout->tv_sec > 0 || timeout->tv_usec > 0) {
             struct timespec ts;
             ts.tv_sec = timeout->tv_sec;
             ts.tv_nsec = timeout->tv_usec * 1000;
             _xv6_nanosleep(&ts, NULL);
+        }
+        /* Clear fd_sets — nothing is known to be ready */
+        if (readfds)   FD_ZERO(readfds);
+        if (writefds)  FD_ZERO(writefds);
+        if (exceptfds) FD_ZERO(exceptfds);
+        return 0;
+    }
+
+    /*
+     * timeout == NULL → blocking wait.  We optimistically report all
+     * requested fds as "ready".  The caller is expected to then call
+     * read()/write() which will block properly in the kernel if no
+     * data is actually available.
+     */
+    int count = 0;
+    
+    if (readfds) {
+        for (int fd = 0; fd < nfds; fd++) {
+            if (FD_ISSET(fd, readfds))
+                count++;
+        }
+    }
+    
+    if (writefds) {
+        for (int fd = 0; fd < nfds; fd++) {
+            if (FD_ISSET(fd, writefds))
+                count++;
         }
     }
     
@@ -1400,3 +1441,103 @@ uid_t geteuid(void) { return 0; }
 gid_t getegid(void) { return 0; }
 int setuid(uid_t uid) { errno = ENOSYS; return -1; }
 int setgroups(int ngroups, const gid_t *grouplist) { errno = ENOSYS; return -1; }
+
+/* ===================================================================== */
+/* Network / socket wrappers                                             */
+/* ===================================================================== */
+
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+/*
+ * Socket wrappers are called directly (not through newlib's _xxx_r layer),
+ * so they must set the real newlib errno — not the global 'int errno' that
+ * was #undef'd above for the reentrant syscall stubs.
+ */
+extern int *__errno(void);
+#undef errno
+#define errno (*__errno())
+
+int socket(int domain, int type, int protocol) {
+    int ret = _xv6_socket(domain, type, protocol);
+    if (ret < 0) { errno = -ret; return -1; }
+    return ret;
+}
+
+int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+    int ret = _xv6_bind(sockfd, addr, (int)addrlen);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int listen(int sockfd, int backlog) {
+    int ret = _xv6_listen(sockfd, backlog);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+    int ret = _xv6_accept(sockfd, addr, addrlen);
+    if (ret < 0) { errno = -ret; return -1; }
+    return ret;
+}
+
+int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+    int ret = _xv6_sconnect(sockfd, addr, (int)addrlen);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
+               const struct sockaddr *dest_addr, socklen_t addrlen) {
+    int ret = _xv6_sendto(sockfd, buf, (int)len, flags, dest_addr, (int)addrlen);
+    if (ret < 0) { errno = -ret; return -1; }
+    return ret;
+}
+
+ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
+                 struct sockaddr *src_addr, socklen_t *addrlen) {
+    int ret = _xv6_recvfrom(sockfd, buf, (int)len, flags, src_addr, addrlen);
+    if (ret < 0) { errno = -ret; return -1; }
+    return ret;
+}
+
+ssize_t send(int sockfd, const void *buf, size_t len, int flags) {
+    return sendto(sockfd, buf, len, flags, NULL, 0);
+}
+
+ssize_t recv(int sockfd, void *buf, size_t len, int flags) {
+    return recvfrom(sockfd, buf, len, flags, NULL, NULL);
+}
+
+int setsockopt(int sockfd, int level, int optname,
+               const void *optval, socklen_t optlen) {
+    int ret = _xv6_setsockopt(sockfd, level, optname, optval, (int)optlen);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int getsockopt(int sockfd, int level, int optname,
+               void *optval, socklen_t *optlen) {
+    int ret = _xv6_getsockopt(sockfd, level, optname, optval, optlen);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int shutdown(int sockfd, int how) {
+    int ret = _xv6_shutdown(sockfd, how);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+    int ret = _xv6_getpeername(sockfd, addr, addrlen);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+    int ret = _xv6_getsockname(sockfd, addr, addrlen);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}

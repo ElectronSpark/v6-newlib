@@ -90,6 +90,20 @@ SYSCALL(setsid)
 SYSCALL(getsid)
 SYSCALL(sync)
 
+# Network / socket syscalls (private names — C wrappers are in newlib_syscalls.c)
+SYSCALL_ALIAS(__xv6_socket, socket)
+SYSCALL_ALIAS(__xv6_bind, bind)
+SYSCALL_ALIAS(__xv6_listen, listen)
+SYSCALL_ALIAS(__xv6_accept, accept)
+SYSCALL_ALIAS(__xv6_sconnect, sconnect)
+SYSCALL_ALIAS(__xv6_sendto, sendto)
+SYSCALL_ALIAS(__xv6_recvfrom, recvfrom)
+SYSCALL_ALIAS(__xv6_setsockopt, setsockopt)
+SYSCALL_ALIAS(__xv6_getsockopt, getsockopt)
+SYSCALL_ALIAS(__xv6_shutdown, shutdown)
+SYSCALL_ALIAS(__xv6_getpeername, getpeername)
+SYSCALL_ALIAS(__xv6_getsockname, getsockname)
+
 # Private syscall entry points for newlib wrappers.
 # Keep public stat/fstat/lstat resolved to libc wrapper functions.
 SYSCALL_ALIAS(__xv6_poll, poll)
