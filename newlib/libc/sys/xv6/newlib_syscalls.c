@@ -1148,108 +1148,16 @@ int clearenv(void) {
 /* ============================================================================
  * I/O Multiplexing: select() and poll()
  * ============================================================================
- * 
- * These provide basic implementations for CPython compatibility.
- * Without full kernel poll/select support, we approximate:
  *
- * - timeout == NULL  (blocking): report all requested fds as ready and
- *   return immediately.  The caller (e.g. CPython readline loop) will
- *   then call read() which properly blocks in the kernel.
+ * select() converts fd_sets into a pollfd array and delegates to the
+ * kernel's poll syscall (_xv6_poll), which performs real readiness
+ * checking for pipes, character devices (console/TTY), regular files, etc.
  *
- * - timeout == {0,0} (poll / non-blocking check): return 0 and clear
- *   the fd_sets.  We cannot actually check whether data is waiting,
- *   so the safe answer is "nothing ready".  This is critical for GNU
- *   readline's typeahead optimisation (_rl_input_queued), which polls
- *   with timeout=0 to see if more characters are available.  If we
- *   lied and said "ready", readline would call read() expecting data
- *   and block — preventing the display refresh that shows the character
- *   the user just typed.
- *
- * - timeout > 0 (timed wait): sleep for the requested duration, then
- *   return 0 (timeout expired, nothing ready).
+ * poll() is a thin wrapper around the kernel syscall.
  */
 
 /* Use newlib's fd_set definition from sys/select.h */
 #include <sys/select.h>
-
-/*
- * select - synchronous I/O multiplexing
- */
-int select(int nfds, fd_set *readfds, fd_set *writefds, 
-           fd_set *exceptfds, struct timeval *timeout) {
-    (void)exceptfds;  /* We don't track exceptions */
-    
-    if (nfds < 0 || nfds > FD_SETSIZE) {
-        errno = EINVAL;
-        return -1;
-    }
-
-    /*
-     * If a timeout is specified (non-NULL), we cannot truly check whether
-     * any fd has data ready without kernel support.  Handle the two cases:
-     *
-     *   timeout == {0,0}  →  pure poll, return 0 immediately
-     *   timeout >  0      →  sleep for the duration, then return 0
-     *
-     * In both cases, clear the fd_sets to indicate "nothing ready".
-     */
-    if (timeout) {
-        if (timeout->tv_sec > 0 || timeout->tv_usec > 0) {
-            struct timespec ts;
-            ts.tv_sec = timeout->tv_sec;
-            ts.tv_nsec = timeout->tv_usec * 1000;
-            _xv6_nanosleep(&ts, NULL);
-        }
-        /* Clear fd_sets — nothing is known to be ready */
-        if (readfds)   FD_ZERO(readfds);
-        if (writefds)  FD_ZERO(writefds);
-        if (exceptfds) FD_ZERO(exceptfds);
-        return 0;
-    }
-
-    /*
-     * timeout == NULL → blocking wait.  We optimistically report all
-     * requested fds as "ready".  The caller is expected to then call
-     * read()/write() which will block properly in the kernel if no
-     * data is actually available.
-     */
-    int count = 0;
-    
-    if (readfds) {
-        for (int fd = 0; fd < nfds; fd++) {
-            if (FD_ISSET(fd, readfds))
-                count++;
-        }
-    }
-    
-    if (writefds) {
-        for (int fd = 0; fd < nfds; fd++) {
-            if (FD_ISSET(fd, writefds))
-                count++;
-        }
-    }
-    
-    return count;
-}
-
-/*
- * pselect - synchronous I/O multiplexing (POSIX)
- *
- * Thin wrapper around select() for readline compatibility.
- * Ignores the signal mask (sigmask) since xv6 signal support is minimal.
- */
-int pselect(int nfds, fd_set *readfds, fd_set *writefds,
-            fd_set *exceptfds, const struct timespec *timeout,
-            const sigset_t *sigmask) {
-    (void)sigmask;
-    struct timeval tv, *tvp = NULL;
-    if (timeout) {
-        tv.tv_sec = timeout->tv_sec;
-        tv.tv_usec = timeout->tv_nsec / 1000;
-        tvp = &tv;
-    }
-    return select(nfds, readfds, writefds, exceptfds, tvp);
-}
 
 /* poll structures - use our own since newlib may not have poll.h */
 #ifndef POLLIN
@@ -1270,9 +1178,121 @@ struct pollfd {
 #endif
 
 /*
+ * select - synchronous I/O multiplexing
+ *
+ * Converts the fd_set bitmasks into a pollfd array, invokes the kernel
+ * poll syscall, then converts the results back into fd_sets.
+ */
+int select(int nfds, fd_set *readfds, fd_set *writefds,
+           fd_set *exceptfds, struct timeval *timeout) {
+    if (nfds < 0 || nfds > FD_SETSIZE) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    /* Convert timeout to milliseconds for poll() */
+    int timeout_ms;
+    if (timeout == NULL) {
+        timeout_ms = -1;   /* block indefinitely */
+    } else if (timeout->tv_sec == 0 && timeout->tv_usec == 0) {
+        timeout_ms = 0;    /* non-blocking poll */
+    } else {
+        timeout_ms = (int)(timeout->tv_sec * 1000 +
+                           timeout->tv_usec / 1000);
+        if (timeout_ms <= 0)
+            timeout_ms = 1; /* at least 1 ms for sub-ms timeouts */
+    }
+
+    /*
+     * Build the pollfd array.  Each fd that appears in any of the
+     * fd_sets gets one entry with the appropriate event flags.
+     */
+    struct pollfd pfds[FD_SETSIZE];
+    int npfds = 0;
+
+    for (int fd = 0; fd < nfds; fd++) {
+        short events = 0;
+        if (readfds  && FD_ISSET(fd, readfds))   events |= POLLIN;
+        if (writefds && FD_ISSET(fd, writefds))  events |= POLLOUT;
+        if (exceptfds && FD_ISSET(fd, exceptfds)) events |= POLLPRI;
+        if (events) {
+            pfds[npfds].fd      = fd;
+            pfds[npfds].events  = events;
+            pfds[npfds].revents = 0;
+            npfds++;
+        }
+    }
+
+    if (npfds == 0) {
+        /* No fds requested — just sleep for the timeout duration */
+        if (timeout_ms > 0) {
+            struct timespec ts;
+            ts.tv_sec  = timeout_ms / 1000;
+            ts.tv_nsec = (timeout_ms % 1000) * 1000000L;
+            _xv6_nanosleep(&ts, NULL);
+        }
+        return 0;
+    }
+
+    /* Ask the kernel */
+    int ret = _xv6_poll((void *)pfds, npfds, timeout_ms);
+    if (ret < 0) {
+        errno = -ret;
+        return -1;
+    }
+
+    /* Clear fd_sets and rebuild from revents */
+    if (readfds)   FD_ZERO(readfds);
+    if (writefds)  FD_ZERO(writefds);
+    if (exceptfds) FD_ZERO(exceptfds);
+
+    int count = 0;
+    for (int i = 0; i < npfds; i++) {
+        short rev = pfds[i].revents;
+        int   fd  = pfds[i].fd;
+        int   got = 0;
+
+        if (readfds && (rev & (POLLIN | POLLHUP | POLLERR))) {
+            FD_SET(fd, readfds);
+            got = 1;
+        }
+        if (writefds && (rev & (POLLOUT | POLLERR))) {
+            FD_SET(fd, writefds);
+            got = 1;
+        }
+        if (exceptfds && (rev & (POLLPRI | POLLNVAL))) {
+            FD_SET(fd, exceptfds);
+            got = 1;
+        }
+        count += got;
+    }
+
+    return count;
+}
+
+/*
+ * pselect - synchronous I/O multiplexing (POSIX)
+ *
+ * Thin wrapper around select().
+ * Ignores the signal mask (sigmask) since xv6 signal support is minimal.
+ */
+int pselect(int nfds, fd_set *readfds, fd_set *writefds,
+            fd_set *exceptfds, const struct timespec *timeout,
+            const sigset_t *sigmask) {
+    (void)sigmask;
+    struct timeval tv, *tvp = NULL;
+    if (timeout) {
+        tv.tv_sec = timeout->tv_sec;
+        tv.tv_usec = timeout->tv_nsec / 1000;
+        tvp = &tv;
+    }
+    return select(nfds, readfds, writefds, exceptfds, tvp);
+}
+
+/*
  * poll - wait for events on file descriptors
- * 
- * Simplified implementation: assumes all valid fds are ready.
+ *
+ * Delegates directly to the kernel poll syscall.
  */
 int poll(struct pollfd *fds, unsigned long nfds, int timeout) {
     if (nfds > (unsigned long)INT_MAX) {
