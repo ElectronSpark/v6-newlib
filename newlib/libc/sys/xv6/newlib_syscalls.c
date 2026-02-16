@@ -27,9 +27,16 @@ extern size_t strlen(const char *s);
 extern char *strchr(const char *s, int c);
 extern char *strncpy(char *dest, const char *src, size_t n);
 
-/* errno - required by newlib */
+/* errno - required by newlib.
+ * We define the global symbol for backward compatibility, then
+ * redirect all subsequent uses through newlib's reentrant __errno()
+ * so that errno writes are visible to code (e.g. CPython) that reads
+ * errno via (*__errno()) / _impure_ptr->_errno.
+ */
 #undef errno
 int errno;
+extern int *__errno(void);
+#define errno (*__errno())
 
 /*
  * Timezone variables for POSIX compatibility
