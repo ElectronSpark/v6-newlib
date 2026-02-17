@@ -58,7 +58,7 @@ extern int _xv6_exit(int status) __asm__("exit");
 extern int _xv6_wait(int *status) __asm__("wait");
 extern int _xv6_kill(int pid, int sig) __asm__("kill");
 extern int _xv6_getpid(void) __asm__("getpid");
-extern int _xv6_exec(const char *path, char **argv) __asm__("exec");
+extern int _xv6_exec(const char *path, char **argv, char **envp) __asm__("exec");
 extern int _xv6_pipe(int *fds) __asm__("pipe");
 extern int _xv6_dup(int fd) __asm__("dup");
 extern int _xv6_dup2(int oldfd, int newfd) __asm__("dup2");
@@ -262,8 +262,7 @@ int _fork(void) {
 }
 
 int _execve(const char *name, char *const argv[], char *const env[]) {
-    (void)env;  /* xv6 doesn't support environment variables */
-    return _xv6_exec(name, (char **)argv);
+    return _xv6_exec(name, (char **)argv, (char **)env);
 }
 
 int _wait(int *status) {
@@ -917,7 +916,11 @@ char **environ = env_ptrs;
 /* Track initialization */
 static int env_initialized = 0;
 
-/* Initialize environment with defaults */
+/* Pointer to envp passed by the kernel via the stack, extracted by crt0.
+ * Weak symbol so configure tests (which don't link crt0) get NULL default. */
+char **__xv6_envp __attribute__((weak)) = NULL;
+
+/* Initialize environment from kernel-provided envp, then set defaults */
 static void env_init(void) {
     if (env_initialized) return;
     env_initialized = 1;
@@ -927,17 +930,29 @@ static void env_init(void) {
         env_ptrs[i] = NULL;
     }
     
-    /* Set some default environment variables */
-    setenv("PATH", "/:/bin", 1);
-    setenv("HOME", "/", 1);
-    setenv("USER", "root", 1);
-    setenv("SHELL", "/sh", 1);
-    setenv("TERM", "xterm", 1);
-    setenv("PWD", "/", 1);
+    /* Import environment variables passed by the kernel (via execve) */
+    if (__xv6_envp) {
+        for (int i = 0; __xv6_envp[i] != NULL && i < MAX_ENV_VARS; i++) {
+            int len = strlen(__xv6_envp[i]);
+            if (len >= MAX_ENV_ENTRY)
+                len = MAX_ENV_ENTRY - 1;
+            memcpy(env_storage[i], __xv6_envp[i], len);
+            env_storage[i][len] = '\0';
+            env_ptrs[i] = env_storage[i];
+        }
+    }
+    
+    /* Set defaults only if not already inherited */
+    if (!getenv("PATH"))  setenv("PATH", "/:/bin", 1);
+    if (!getenv("HOME"))  setenv("HOME", "/", 1);
+    if (!getenv("USER"))  setenv("USER", "root", 1);
+    if (!getenv("SHELL")) setenv("SHELL", "/sh", 1);
+    if (!getenv("TERM"))  setenv("TERM", "xterm", 1);
+    if (!getenv("PWD"))   setenv("PWD", "/", 1);
     
     /* Python configuration - minimal embedded mode */
-    setenv("PYTHONHOME", "/", 1);
-    setenv("PYTHONDONTWRITEBYTECODE", "1", 1);
+    if (!getenv("PYTHONHOME")) setenv("PYTHONHOME", "/", 1);
+    if (!getenv("PYTHONDONTWRITEBYTECODE")) setenv("PYTHONDONTWRITEBYTECODE", "1", 1);
 }
 
 /* Find an environment variable by name, returns index or -1 */
