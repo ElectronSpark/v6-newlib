@@ -26,6 +26,8 @@ extern void *memset(void *s, int c, size_t n);
 extern size_t strlen(const char *s);
 extern char *strchr(const char *s, int c);
 extern char *strncpy(char *dest, const char *src, size_t n);
+extern int strcmp(const char *s1, const char *s2);
+extern int strncmp(const char *s1, const char *s2, size_t n);
 
 /* errno - required by newlib.
  * We define the global symbol for backward compatibility, then
@@ -950,8 +952,7 @@ static void env_init(void) {
     if (!getenv("TERM"))  setenv("TERM", "xterm", 1);
     if (!getenv("PWD"))   setenv("PWD", "/", 1);
     
-    /* Python configuration - minimal embedded mode */
-    if (!getenv("PYTHONHOME")) setenv("PYTHONHOME", "/", 1);
+    /* Python configuration */
     if (!getenv("PYTHONDONTWRITEBYTECODE")) setenv("PYTHONDONTWRITEBYTECODE", "1", 1);
 }
 
@@ -1582,4 +1583,301 @@ int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     int ret = _xv6_getsockname(sockfd, addr, addrlen);
     if (ret < 0) { errno = -ret; return -1; }
     return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  inet address conversion functions (needed by CPython _socket)     */
+/* ------------------------------------------------------------------ */
+
+#include <stdio.h>   /* sscanf, snprintf */
+#include <netdb.h>   /* struct addrinfo, getaddrinfo decl */
+
+/* DNS error code variable (declared extern in netdb.h) */
+int h_errno = 0;
+
+/* Byte order: RISC-V is little-endian, network is big-endian.
+ * Provide function versions alongside the macros in netinet/in.h so
+ * that code taking the address of htons/ntohl etc. can link.
+ */
+#undef htons
+#undef ntohs
+#undef htonl
+#undef ntohl
+uint16_t htons(uint16_t x) { return __builtin_bswap16(x); }
+uint16_t ntohs(uint16_t x) { return __builtin_bswap16(x); }
+uint32_t htonl(uint32_t x) { return __builtin_bswap32(x); }
+uint32_t ntohl(uint32_t x) { return __builtin_bswap32(x); }
+
+/* Forward declare so inet_addr can call inet_aton */
+int inet_aton(const char *cp, struct in_addr *inp);
+
+/**
+ * Parse a dotted-quad IPv4 address string into a network-byte-order uint32.
+ * Returns INADDR_NONE on error.
+ */
+in_addr_t inet_addr(const char *cp)
+{
+    struct in_addr val;
+    if (inet_aton(cp, &val))
+        return val.s_addr;
+    return INADDR_NONE;
+}
+
+/**
+ * Parse a dotted-quad IPv4 address string.
+ * Returns 1 on success, 0 on failure.
+ */
+int inet_aton(const char *cp, struct in_addr *inp)
+{
+    unsigned int a, b, c, d;
+    int n;
+    /* accept "1.2.3.4" only — no octal/hex shortcuts */
+    n = sscanf(cp, "%u.%u.%u.%u", &a, &b, &c, &d);
+    if (n != 4)
+        return 0;
+    if (a > 255 || b > 255 || c > 255 || d > 255)
+        return 0;
+    inp->s_addr = htonl((a << 24) | (b << 16) | (c << 8) | d);
+    return 1;
+}
+
+/**
+ * Convert a network-byte-order IPv4 address to dotted-quad string.
+ * Uses a static buffer (not thread safe — matches POSIX spec).
+ */
+char *inet_ntoa(struct in_addr in)
+{
+    static char buf[16];  /* "255.255.255.255\0" */
+    uint32_t addr = ntohl(in.s_addr);
+    snprintf(buf, sizeof(buf), "%u.%u.%u.%u",
+             (addr >> 24) & 0xff,
+             (addr >> 16) & 0xff,
+             (addr >>  8) & 0xff,
+              addr        & 0xff);
+    return buf;
+}
+
+/**
+ * Convert text address to binary form.
+ * Only AF_INET is fully supported; AF_INET6 is stubbed.
+ */
+int inet_pton(int af, const char *src, void *dst)
+{
+    if (af == AF_INET) {
+        struct in_addr tmp;
+        if (inet_aton(src, &tmp)) {
+            memcpy(dst, &tmp, sizeof(tmp));
+            return 1;
+        }
+        return 0;
+    }
+    errno = EAFNOSUPPORT;
+    return -1;
+}
+
+/**
+ * Convert binary address to text form.
+ * Only AF_INET is supported.
+ */
+const char *inet_ntop(int af, const void *src, char *dst, unsigned int size)
+{
+    if (af == AF_INET) {
+        struct in_addr tmp;
+        memcpy(&tmp, src, sizeof(tmp));
+        uint32_t addr = ntohl(tmp.s_addr);
+        int n = snprintf(dst, size, "%u.%u.%u.%u",
+                         (addr >> 24) & 0xff,
+                         (addr >> 16) & 0xff,
+                         (addr >>  8) & 0xff,
+                          addr        & 0xff);
+        if (n < 0 || (unsigned int)n >= size) {
+            errno = ENOSPC;
+            return NULL;
+        }
+        return dst;
+    }
+    errno = EAFNOSUPPORT;
+    return NULL;
+}
+
+/* ------------------------------------------------------------------ */
+/*  DNS / name resolution stubs                                       */
+/*  xv6 has no DNS resolver; only numeric IPv4 addresses work.        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * getaddrinfo — resolve host/service to socket address.
+ *
+ * Only numeric IPv4 addresses and numeric ports are supported.
+ * DNS names will return EAI_NONAME.
+ */
+int getaddrinfo(const char *node, const char *service,
+                const struct addrinfo *hints, struct addrinfo **res)
+{
+    if (!res)
+        return EAI_FAIL;
+    *res = NULL;
+
+    int family = hints ? hints->ai_family : AF_INET;
+    int socktype = hints ? hints->ai_socktype : SOCK_STREAM;
+    int protocol = hints ? hints->ai_protocol : 0;
+
+    struct sockaddr_in *sa = (struct sockaddr_in *)malloc(sizeof(*sa));
+    struct addrinfo *ai = (struct addrinfo *)malloc(sizeof(*ai));
+    if (!sa || !ai) {
+        free(sa);
+        free(ai);
+        return EAI_MEMORY;
+    }
+
+    memset(sa, 0, sizeof(*sa));
+    sa->sin_family = AF_INET;
+
+    /* Parse port */
+    if (service) {
+        int port = 0;
+        for (const char *p = service; *p; p++) {
+            if (*p < '0' || *p > '9') {
+                free(sa); free(ai);
+                return EAI_SERVICE;
+            }
+            port = port * 10 + (*p - '0');
+        }
+        sa->sin_port = htons((uint16_t)port);
+    }
+
+    /* Parse address */
+    if (node) {
+        if (!inet_aton(node, &sa->sin_addr)) {
+            /* Not a numeric address — no DNS on xv6 */
+            free(sa); free(ai);
+            return EAI_NONAME;
+        }
+    } else if (hints && (hints->ai_flags & AI_PASSIVE)) {
+        sa->sin_addr.s_addr = htonl(INADDR_ANY);
+    } else {
+        sa->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    }
+
+    memset(ai, 0, sizeof(*ai));
+    ai->ai_flags = hints ? hints->ai_flags : 0;
+    ai->ai_family = (family == AF_UNSPEC) ? AF_INET : family;
+    ai->ai_socktype = socktype;
+    ai->ai_protocol = protocol;
+    ai->ai_addrlen = sizeof(*sa);
+    ai->ai_canonname = NULL;
+    ai->ai_addr = (struct sockaddr *)sa;
+    ai->ai_next = NULL;
+
+    *res = ai;
+    return 0;
+}
+
+void freeaddrinfo(struct addrinfo *res)
+{
+    while (res) {
+        struct addrinfo *next = res->ai_next;
+        free(res->ai_addr);
+        free(res->ai_canonname);
+        free(res);
+        res = next;
+    }
+}
+
+const char *gai_strerror(int errcode)
+{
+    switch (errcode) {
+    case 0:             return "Success";
+    case EAI_NONAME:    return "Name or service not known";
+    case EAI_AGAIN:     return "Temporary failure in name resolution";
+    case EAI_FAIL:      return "Non-recoverable failure in name resolution";
+    case EAI_FAMILY:    return "Address family not supported";
+    case EAI_SOCKTYPE:  return "Socket type not supported";
+    case EAI_SERVICE:   return "Service not supported";
+    case EAI_MEMORY:    return "Memory allocation failure";
+    case EAI_SYSTEM:    return "System error";
+    default:            return "Unknown error";
+    }
+}
+
+int getnameinfo(const struct sockaddr *sa, socklen_t salen,
+                char *host, socklen_t hostlen,
+                char *serv, socklen_t servlen, int flags)
+{
+    (void)flags;
+    if (sa->sa_family != AF_INET)
+        return EAI_FAMILY;
+
+    const struct sockaddr_in *sin = (const struct sockaddr_in *)sa;
+    (void)salen;
+
+    if (host && hostlen > 0) {
+        inet_ntop(AF_INET, &sin->sin_addr, host, hostlen);
+    }
+    if (serv && servlen > 0) {
+        snprintf(serv, servlen, "%d", ntohs(sin->sin_port));
+    }
+    return 0;
+}
+
+/* gethostbyname - minimal stub, only handles numeric addresses */
+struct hostent *gethostbyname(const char *name)
+{
+    static struct hostent he;
+    static struct in_addr addr;
+    static char *addr_list[2];
+    static char hostname[64];
+
+    if (!inet_aton(name, &addr)) {
+        h_errno = HOST_NOT_FOUND;
+        return NULL;
+    }
+
+    strncpy(hostname, name, sizeof(hostname) - 1);
+    hostname[sizeof(hostname) - 1] = '\0';
+    addr_list[0] = (char *)&addr;
+    addr_list[1] = NULL;
+
+    he.h_name = hostname;
+    he.h_aliases = NULL;
+    he.h_addrtype = AF_INET;
+    he.h_length = sizeof(struct in_addr);
+    he.h_addr_list = addr_list;
+
+    return &he;
+}
+
+struct hostent *gethostbyaddr(const void *addr, socklen_t len, int type)
+{
+    (void)addr; (void)len; (void)type;
+    h_errno = HOST_NOT_FOUND;
+    return NULL;
+}
+
+struct protoent *getprotobyname(const char *name)
+{
+    static struct protoent pe;
+    static char *no_aliases[] = { NULL };
+
+    if (strcmp(name, "tcp") == 0) {
+        pe.p_name = "tcp"; pe.p_aliases = no_aliases; pe.p_proto = 6;
+        return &pe;
+    }
+    if (strcmp(name, "udp") == 0) {
+        pe.p_name = "udp"; pe.p_aliases = no_aliases; pe.p_proto = 17;
+        return &pe;
+    }
+    return NULL;
+}
+
+struct servent *getservbyname(const char *name, const char *proto)
+{
+    (void)name; (void)proto;
+    return NULL;
+}
+
+struct servent *getservbyport(int port, const char *proto)
+{
+    (void)port; (void)proto;
+    return NULL;
 }

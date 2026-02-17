@@ -56,6 +56,12 @@
 #define MSG_DONTWAIT   0x40
 #define MSG_NOSIGNAL   0x4000
 
+/* Misc */
+#define SOMAXCONN      128
+
+/* CMSG support (minimal — CPython checks for SCM_RIGHTS) */
+#define SCM_RIGHTS     1
+
 /* Generic socket address (for type compatibility) */
 typedef unsigned short sa_family_t;
 typedef uint32_t socklen_t;
