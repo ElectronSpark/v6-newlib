@@ -116,18 +116,31 @@ struct sigaction {
 #else /* defined(__rtems__) */
 
 #define SA_NOCLDSTOP 1  /* only value supported now for sa_flags */
-#ifndef SA_NODEFER
-#define SA_NODEFER   2
+#define SA_NOCLDWAIT 2  /* Don't create zombie processes on child exit */
+#ifndef SA_SIGINFO
+#define SA_SIGINFO   4  /* Use sa_sigaction instead of sa_handler */
+#endif
+#ifndef SA_ONSTACK
+#define SA_ONSTACK   8  /* Use alternate signal stack */
 #endif
 #ifndef SA_RESTART
-#define SA_RESTART   4
+#define SA_RESTART   0x10  /* Restart system calls if interrupted */
+#endif
+#ifndef SA_NODEFER
+#define SA_NODEFER   0x20  /* Don't block the signal in the handler */
+#endif
+#ifndef SA_RESETHAND
+#define SA_RESETHAND 0x40  /* Reset handler to SIG_DFL after first delivery */
 #endif
 
 typedef void (*_sig_func_ptr)(int);
 
 struct sigaction 
 {
-	_sig_func_ptr sa_handler;
+	union {
+		_sig_func_ptr sa_handler;
+		void (*sa_sigaction)(int, void *, void *);
+	};
 	sigset_t sa_mask;
 	int sa_flags;
 };
@@ -164,7 +177,7 @@ typedef struct sigaltstack {
 } stack_t;
 
 #if __POSIX_VISIBLE
-#define SIG_SETMASK 0	/* set mask with sigprocmask() */
+#define SIG_SETMASK 3	/* set mask with sigprocmask() */
 #define SIG_BLOCK 1	/* set of signals to block */
 #define SIG_UNBLOCK 2	/* set of signals to, well, unblock */
 
@@ -303,12 +316,12 @@ int str2sig(const char *__restrict, int *__restrict);
 #define	SIGTRAP	5	/* trace trap (not reset when caught) */
 #define	SIGIOT	6	/* IOT instruction */
 #define	SIGABRT 6	/* used by abort, replace SIGIOT in the future */
-#define	SIGEMT	7	/* EMT instruction */
+#define	SIGBUS	7	/* bus error */
 #define	SIGFPE	8	/* floating point exception */
 #define	SIGKILL	9	/* kill (cannot be caught or ignored) */
-#define	SIGBUS	10	/* bus error */
+#define	SIGUSR1	10	/* user defined signal 1 */
 #define	SIGSEGV	11	/* segmentation violation */
-#define	SIGSYS	12	/* bad argument to system call */
+#define	SIGUSR2	12	/* user defined signal 2 */
 #define	SIGPIPE	13	/* write on a pipe with no one to read it */
 #define	SIGALRM	14	/* alarm clock */
 #define	SIGTERM	15	/* software termination signal from kill */
@@ -354,24 +367,24 @@ int str2sig(const char *__restrict, int *__restrict);
 #define	SIGTTOU	27	/* like TTIN for output if (tp->t_local&LTOSTOP) */
 #define NSIG	28	
 #else
-#define	SIGURG	16	/* urgent condition on IO channel */
-#define	SIGSTOP	17	/* sendable stop signal not from tty */
-#define	SIGTSTP	18	/* stop signal from tty */
-#define	SIGCONT	19	/* continue a stopped process */
-#define	SIGCHLD	20	/* to parent on child stop or exit */
-#define	SIGCLD	20	/* System V name for SIGCHLD */
+#define	SIGSTKFLT 16	/* stack fault on coprocessor */
+#define	SIGCHLD	17	/* to parent on child stop or exit */
+#define	SIGCLD	17	/* System V name for SIGCHLD */
+#define	SIGCONT	18	/* continue a stopped process */
+#define	SIGSTOP	19	/* sendable stop signal not from tty */
+#define	SIGTSTP	20	/* stop signal from tty */
 #define	SIGTTIN	21	/* to readers pgrp upon background tty read */
 #define	SIGTTOU	22	/* like TTIN for output if (tp->t_local&LTOSTOP) */
-#define	SIGIO	23	/* input/output possible signal */
-#define	SIGPOLL	SIGIO	/* System V name for SIGIO */
+#define	SIGURG	23	/* urgent condition on IO channel */
 #define	SIGXCPU	24	/* exceeded CPU time limit */
 #define	SIGXFSZ	25	/* exceeded file size limit */
 #define	SIGVTALRM 26	/* virtual time alarm */
 #define	SIGPROF	27	/* profiling time alarm */
 #define	SIGWINCH 28	/* window changed */
-#define	SIGLOST 29	/* resource lost (eg, record-lock lost) */
-#define	SIGUSR1 30	/* user defined signal 1 */
-#define	SIGUSR2 31	/* user defined signal 2 */
+#define	SIGIO	29	/* input/output possible signal */
+#define	SIGPOLL	SIGIO	/* System V name for SIGIO */
+#define	SIGPWR	30	/* power failure */
+#define	SIGSYS	31	/* bad argument to system call */
 #define NSIG	32      /* signal 0 implied */
 #endif
 #endif

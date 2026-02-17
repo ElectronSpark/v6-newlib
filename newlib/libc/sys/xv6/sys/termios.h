@@ -121,6 +121,8 @@ struct termios {
 #define TIOCSWINSZ 0x5414
 #define TIOCGPGRP 0x540F
 #define TIOCSPGRP 0x5410
+#define TIOCGPTN  0x80045430  /* Get PTY slave number */
+#define TIOCSCTTY 0x540E      /* Set controlling terminal */
 
 struct winsize {
     uint16_t ws_row;

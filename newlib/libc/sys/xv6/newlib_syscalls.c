@@ -55,7 +55,7 @@ extern int _xv6_read(int fd, void *buf, int n) __asm__("read");
 extern int _xv6_write(int fd, const void *buf, int n) __asm__("write");
 extern int _xv6_open(const char *path, int flags) __asm__("open");
 extern int _xv6_close(int fd) __asm__("close");
-extern int _xv6_fork(void) __asm__("fork");
+extern int _xv6_clone(void *args) __asm__("clone");
 extern int _xv6_exit(int status) __asm__("exit");
 extern int _xv6_wait(int *status) __asm__("wait");
 extern int _xv6_kill(int pid, int sig) __asm__("kill");
@@ -204,6 +204,11 @@ static int xv6_kstat_to_newlib(const struct xv6_kstat *kst,
 #define NEWLIB_O_CREAT    0x0200
 #define NEWLIB_O_TRUNC    0x0400
 #define NEWLIB_O_EXCL     0x0800
+#define NEWLIB_O_NONBLOCK 0x4000
+#define NEWLIB_O_NOCTTY   0x8000
+#define NEWLIB_O_CLOEXEC  0x40000
+#define NEWLIB_O_NOFOLLOW 0x100000
+#define NEWLIB_O_DIRECTORY 0x200000
 
 /* xv6/musl flag values */
 #define XV6_O_RDONLY      00
@@ -211,8 +216,13 @@ static int xv6_kstat_to_newlib(const struct xv6_kstat *kst,
 #define XV6_O_RDWR        02
 #define XV6_O_CREAT       0100
 #define XV6_O_EXCL        0200
+#define XV6_O_NOCTTY      0400
 #define XV6_O_TRUNC       01000
 #define XV6_O_APPEND      02000
+#define XV6_O_NONBLOCK    04000
+#define XV6_O_DIRECTORY   0200000
+#define XV6_O_NOFOLLOW    0400000
+#define XV6_O_CLOEXEC     02000000
 
 /**
  * Translate newlib open flags to xv6/musl flags
@@ -238,6 +248,16 @@ static int translate_open_flags(int newlib_flags) {
         xv6_flags |= XV6_O_APPEND;
     if (newlib_flags & NEWLIB_O_EXCL)
         xv6_flags |= XV6_O_EXCL;
+    if (newlib_flags & NEWLIB_O_NONBLOCK)
+        xv6_flags |= XV6_O_NONBLOCK;
+    if (newlib_flags & NEWLIB_O_NOCTTY)
+        xv6_flags |= XV6_O_NOCTTY;
+    if (newlib_flags & NEWLIB_O_CLOEXEC)
+        xv6_flags |= XV6_O_CLOEXEC;
+    if (newlib_flags & NEWLIB_O_NOFOLLOW)
+        xv6_flags |= XV6_O_NOFOLLOW;
+    if (newlib_flags & NEWLIB_O_DIRECTORY)
+        xv6_flags |= XV6_O_DIRECTORY;
     
     return xv6_flags;
 }
@@ -260,7 +280,21 @@ void _exit(int status) {
 }
 
 int _fork(void) {
-    return _xv6_fork();
+    /* xv6 has no SYS_fork; use clone(SIGCHLD) like Linux */
+    struct {
+        uint64_t flags;
+        uint64_t stack;
+        uint64_t stack_size;
+        uint64_t entry;
+        uint64_t esignal;
+        uint64_t tls;
+        uint64_t ctid;
+        uint64_t ptid;
+    } args;
+    __builtin_memset(&args, 0, sizeof(args));
+    args.flags = 0;      /* No sharing flags = full fork */
+    args.esignal = 17;   /* SIGCHLD */
+    return _xv6_clone(&args);
 }
 
 int _execve(const char *name, char *const argv[], char *const env[]) {
@@ -649,11 +683,69 @@ int _getentropy(void *buffer, size_t length) {
  * Additional syscalls for CPython compatibility
  */
 
+/**
+ * Translate kernel file status flags back to newlib encoding.
+ * Used by fcntl(F_GETFL) to return flags userspace understands.
+ */
+static int translate_kernel_to_newlib_flags(int kernel_flags) {
+    int newlib_flags = 0;
+    
+    /* Access mode */
+    int accmode = kernel_flags & 03;
+    newlib_flags |= accmode;  /* O_RDONLY/O_WRONLY/O_RDWR match */
+    
+    if (kernel_flags & XV6_O_APPEND)
+        newlib_flags |= NEWLIB_O_APPEND;
+    if (kernel_flags & XV6_O_CREAT)
+        newlib_flags |= NEWLIB_O_CREAT;
+    if (kernel_flags & XV6_O_TRUNC)
+        newlib_flags |= NEWLIB_O_TRUNC;
+    if (kernel_flags & XV6_O_EXCL)
+        newlib_flags |= NEWLIB_O_EXCL;
+    if (kernel_flags & XV6_O_NONBLOCK)
+        newlib_flags |= NEWLIB_O_NONBLOCK;
+    if (kernel_flags & XV6_O_NOCTTY)
+        newlib_flags |= NEWLIB_O_NOCTTY;
+    if (kernel_flags & XV6_O_CLOEXEC)
+        newlib_flags |= NEWLIB_O_CLOEXEC;
+    if (kernel_flags & XV6_O_NOFOLLOW)
+        newlib_flags |= NEWLIB_O_NOFOLLOW;
+    if (kernel_flags & XV6_O_DIRECTORY)
+        newlib_flags |= NEWLIB_O_DIRECTORY;
+    
+    return newlib_flags;
+}
+
 int _fcntl(int fd, int cmd, ...) {
-    /* For simplicity, assume third arg is int */
-    /* A proper implementation would use va_args */
+    va_list ap;
     int arg = 0;
-    return _xv6_fcntl(fd, cmd, arg);
+
+    va_start(ap, cmd);
+    /* F_DUPFD, F_SETFD, F_SETFL, F_DUPFD_CLOEXEC take an int argument */
+    if (cmd == 0 /* F_DUPFD */ || cmd == 2 /* F_SETFD */ ||
+        cmd == 4 /* F_SETFL */ || cmd == 14 /* newlib F_DUPFD_CLOEXEC */) {
+        arg = va_arg(ap, int);
+    }
+    va_end(ap);
+
+    /* Translate F_DUPFD_CLOEXEC command number */
+    int kernel_cmd = cmd;
+    if (cmd == 14)  /* newlib F_DUPFD_CLOEXEC */
+        kernel_cmd = 1030;  /* kernel F_DUPFD_CLOEXEC */
+
+    /* Translate flags for F_SETFL */
+    if (cmd == 4 /* F_SETFL */) {
+        arg = translate_open_flags(arg);
+    }
+
+    int ret = _xv6_fcntl(fd, kernel_cmd, arg);
+
+    /* Translate flags back for F_GETFL */
+    if (cmd == 3 /* F_GETFL */ && ret >= 0) {
+        ret = translate_kernel_to_newlib_flags(ret);
+    }
+
+    return ret;
 }
 
 int _access(const char *path, int mode) {
