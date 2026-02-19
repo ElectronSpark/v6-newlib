@@ -11,6 +11,7 @@
 
 #include <sys/types.h>
 #include <stdint.h>
+#include <time.h>
 
 /*
  * Event filters (negative values, BSD convention)
@@ -41,6 +42,10 @@
 #define NOTE_FORK       0x40000000
 #define NOTE_EXEC       0x20000000
 #define NOTE_TRACK      0x00000001
+#define NOTE_CHILD      0x00000004
+#define NOTE_TRACKERR   0x00000002
+#define NOTE_PCTRLMASK  0xf0000000
+#define NOTE_PDATAMASK  0x000fffff
 
 /*
  * EVFILT_VNODE filter-specific flags (fflags)
@@ -51,6 +56,7 @@
 #define NOTE_ATTRIB     0x00000008
 #define NOTE_LINK       0x00000010
 #define NOTE_RENAME     0x00000020
+#define NOTE_REVOKE     0x00000040
 
 /*
  * struct kevent - user-space event structure (the ABI)
@@ -106,6 +112,20 @@ int kevent_register(int kqfd, struct kevent *changelist, int nchanges);
  */
 int kevent_wait(int kqfd, struct kevent *eventlist, int nevents,
                 int timeout_ms);
+
+/**
+ * BSD-compatible combined register-and-wait.
+ * @param kq         kqueue file descriptor
+ * @param changelist array of kevent changes (may be NULL if nchanges == 0)
+ * @param nchanges   number of entries in changelist
+ * @param eventlist  output buffer for triggered events (may be NULL if nevents == 0)
+ * @param nevents    maximum number of events to return
+ * @param timeout    timeout (NULL = block, tv_sec==0 && tv_nsec==0 = poll)
+ * @return number of ready events, or -1 on error (errno set).
+ */
+int kevent(int kq, const struct kevent *changelist, int nchanges,
+           struct kevent *eventlist, int nevents,
+           const struct timespec *timeout);
 
 __END_DECLS
 

@@ -2021,3 +2021,37 @@ int kevent_wait(int kqfd, struct kevent *eventlist, int nevents, int timeout_ms)
     }
     return ret;
 }
+
+/*
+ * BSD-compatible kevent() — combines register + wait in one call.
+ * Converts struct timespec to the integer milliseconds our kernel expects.
+ */
+int kevent(int kq, const struct kevent *changelist, int nchanges,
+           struct kevent *eventlist, int nevents,
+           const struct timespec *timeout)
+{
+    /* 1. Register phase */
+    if (nchanges > 0 && changelist != NULL) {
+        int ret = kevent_register(kq, (struct kevent *)changelist, nchanges);
+        if (ret < 0)
+            return -1;  /* errno already set by kevent_register */
+    }
+
+    /* 2. Wait phase */
+    if (nevents <= 0 || eventlist == NULL)
+        return 0;
+
+    int timeout_ms;
+    if (timeout == NULL) {
+        timeout_ms = -1;  /* block indefinitely */
+    } else {
+        /* Convert timespec → ms, clamping to INT_MAX */
+        long long ms = (long long)timeout->tv_sec * 1000
+                     + (timeout->tv_nsec + 999999) / 1000000;
+        if (ms > __INT_MAX__)
+            ms = __INT_MAX__;
+        timeout_ms = (int)ms;
+    }
+
+    return kevent_wait(kq, eventlist, nevents, timeout_ms);
+}
