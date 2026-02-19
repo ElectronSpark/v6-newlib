@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <limits.h>
+#include <stdio.h>
 
 /* Declare memcpy/memset/strlen/strchr/strncpy directly to avoid kernel/newlib string.h conflicts */
 extern void *memcpy(void *dest, const void *src, size_t n);
@@ -745,6 +746,10 @@ int _fcntl(int fd, int cmd, ...) {
     }
 
     int ret = _xv6_fcntl(fd, kernel_cmd, arg);
+    if (ret < 0) {
+        errno = -ret;
+        return -1;
+    }
 
     /* Translate flags back for F_GETFL */
     if (cmd == 3 /* F_GETFL */ && ret >= 0) {
@@ -759,7 +764,12 @@ int _access(const char *path, int mode) {
 }
 
 pid_t _waitpid(pid_t pid, int *status, int options) {
-    return _xv6_waitpid(pid, status, options);
+    int ret = _xv6_waitpid(pid, status, options);
+    if (ret < 0) {
+        errno = -ret;
+        return -1;
+    }
+    return ret;
 }
 
 int _nanosleep(const struct timespec *req, struct timespec *rem) {
@@ -818,12 +828,26 @@ uid_t _geteuid(void) { return 0; }
 gid_t _getgid(void) { return 0; }
 gid_t _getegid(void) { return 0; }
 mode_t _umask(mode_t mask) { (void)mask; return 022; }
+mode_t umask(mode_t mask) { return _umask(mask); }
 int _chmod(const char *path, mode_t mode) { (void)path; (void)mode; return 0; }
 int _fchmod(int fd, mode_t mode) { (void)fd; (void)mode; return 0; }
 int _setuid(uid_t uid) { (void)uid; return 0; }
 int _setgid(gid_t gid) { (void)gid; return 0; }
 int fsync(int fd) { (void)fd; return 0; }
 int fdatasync(int fd) { (void)fd; return 0; }
+
+/**
+ * killpg - send signal to a process group
+ * Declared in newlib's sys/signal.h, dash needs it for job control.
+ */
+int killpg(pid_t pgrp, int sig)
+{
+    if (pgrp < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    return _xv6_kill(-pgrp, sig);
+}
 
 /*
  * Note: getrandom is now provided by usys.S as a syscall stub.
@@ -2054,4 +2078,217 @@ int kevent(int kq, const struct kevent *changelist, int nchanges,
     }
 
     return kevent_wait(kq, eventlist, nevents, timeout_ms);
+}
+
+/* ============================================================================
+ * Terminal process group control: tcsetpgrp / tcgetpgrp / getpgrp
+ * ============================================================================
+ * dash (and other shells) use these for job control.
+ * xv6 implements them through ioctl TIOCSPGRP / TIOCGPGRP.
+ */
+#ifndef TIOCGPGRP
+#define TIOCGPGRP 0x540F
+#endif
+#ifndef TIOCSPGRP
+#define TIOCSPGRP 0x5410
+#endif
+
+pid_t tcgetpgrp(int fd)
+{
+    pid_t pgrp;
+    int ret = _xv6_ioctl(fd, TIOCGPGRP, (uint64_t)&pgrp);
+    if (ret < 0) {
+        errno = -ret;
+        return -1;
+    }
+    return pgrp;
+}
+
+int tcsetpgrp(int fd, pid_t pgrp)
+{
+    int ret = _xv6_ioctl(fd, TIOCSPGRP, (uint64_t)&pgrp);
+    if (ret < 0) {
+        errno = -ret;
+        return -1;
+    }
+    return 0;
+}
+
+pid_t getpgrp(void)
+{
+    /* getpgrp() == getpgid(0) — return current process's process group */
+    extern int _xv6_getpgid(int pid) __asm__("getpgid");
+    return (pid_t)_xv6_getpgid(0);
+}
+
+/* ============================================================================
+ * wait3 — legacy BSD wait with resource usage
+ * ============================================================================
+ * dash uses wait3(status, flags, NULL) extensively for job control.
+ * We implement it as a thin wrapper around waitpid(-1, ...).
+ */
+struct rusage;  /* forward declare; dash passes NULL */
+
+pid_t wait3(int *status, int options, struct rusage *rusage)
+{
+    (void)rusage;  /* xv6 has no rusage */
+    int ret = _xv6_waitpid(-1, status, options);
+    if (ret < 0) {
+        errno = -ret;
+        return -1;
+    }
+    return ret;
+}
+
+/* ============================================================================
+ * sysconf — query system configuration values
+ * ============================================================================
+ * dash's "times" builtin calls sysconf(_SC_CLK_TCK).
+ * Return reasonable defaults for xv6.
+ */
+#ifndef _SC_CLK_TCK
+#define _SC_CLK_TCK 2
+#endif
+#ifndef _SC_OPEN_MAX
+#define _SC_OPEN_MAX 4
+#endif
+#ifndef _SC_PAGESIZE
+#define _SC_PAGESIZE 30
+#endif
+#ifndef _SC_ARG_MAX
+#define _SC_ARG_MAX 0
+#endif
+#ifndef _SC_CHILD_MAX
+#define _SC_CHILD_MAX 1
+#endif
+#ifndef _SC_NGROUPS_MAX
+#define _SC_NGROUPS_MAX 3
+#endif
+
+long sysconf(int name)
+{
+    switch (name) {
+    case _SC_CLK_TCK:       return 100;    /* xv6 timer ticks at ~100 Hz */
+    case _SC_OPEN_MAX:      return 16;     /* NOFILE in xv6 */
+    case _SC_PAGESIZE:      return 4096;   /* PGSIZE */
+    case _SC_ARG_MAX:       return 4096;   /* reasonable default */
+    case _SC_CHILD_MAX:     return 64;     /* NPROC */
+    case _SC_NGROUPS_MAX:   return 0;      /* no supplementary groups */
+    default:
+        errno = EINVAL;
+        return -1;
+    }
+}
+
+/* ============================================================================
+ * strsignal — convert signal number to descriptive string
+ * ============================================================================
+ * dash displays signal names in job status output.
+ */
+static const char *_sig_names[] = {
+    [0]  = "Signal 0",
+    [1]  = "Hangup",
+    [2]  = "Interrupt",
+    [3]  = "Quit",
+    [4]  = "Illegal instruction",
+    [5]  = "Trace/BPT trap",
+    [6]  = "Aborted",
+    [7]  = "Bus error",
+    [8]  = "Floating point exception",
+    [9]  = "Killed",
+    [10] = "User defined signal 1",
+    [11] = "Segmentation fault",
+    [12] = "User defined signal 2",
+    [13] = "Broken pipe",
+    [14] = "Alarm clock",
+    [15] = "Terminated",
+};
+#define _NUM_SIGS (sizeof(_sig_names) / sizeof(_sig_names[0]))
+
+static char _sigbuf[32];
+
+char *strsignal(int signo)
+{
+    if (signo >= 0 && (unsigned)signo < _NUM_SIGS && _sig_names[signo])
+        return (char *)_sig_names[signo];
+    /* Fall back to a generic message */
+    char *p = _sigbuf;
+    const char *pfx = "Signal ";
+    while (*pfx) *p++ = *pfx++;
+    /* itoa for small positive numbers */
+    if (signo < 0) { *p++ = '-'; signo = -signo; }
+    char tmp[12]; int i = 0;
+    do { tmp[i++] = '0' + signo % 10; signo /= 10; } while (signo);
+    while (i-- > 0) *p++ = tmp[i];
+    *p = '\0';
+    return _sigbuf;
+}
+
+/* ============================================================================
+ * getpwnam — lookup user password entry by name
+ * ============================================================================
+ * dash uses this for ~user tilde expansion.  xv6 has no /etc/passwd,
+ * so we return a minimal entry for "root" and NULL for everything else.
+ */
+#include <pwd.h>
+
+static struct passwd _pw_root = {
+    .pw_name  = "root",
+    .pw_passwd = "",
+    .pw_uid   = 0,
+    .pw_gid   = 0,
+    .pw_dir   = "/",
+    .pw_shell = "/bin/sh",
+};
+
+struct passwd *getpwnam(const char *name)
+{
+    if (name && strcmp(name, "root") == 0)
+        return &_pw_root;
+    return NULL;
+}
+
+/* ============================================================================
+ * faccessat — check file accessibility relative to directory fd
+ * ============================================================================
+ * dash's test builtin uses faccessat(AT_FDCWD, path, mode, AT_EACCESS).
+ * xv6 doesn't have faccessat; approximate with open()+close() for F_OK,
+ * and always succeed for R/W/X checks (xv6 has no permission model).
+ */
+#include <fcntl.h>
+#ifndef AT_FDCWD
+#define AT_FDCWD -100
+#endif
+#ifndef AT_EACCESS
+#define AT_EACCESS 0x200
+#endif
+
+int faccessat(int dirfd, const char *pathname, int mode, int flags)
+{
+    (void)dirfd;   /* xv6 only supports AT_FDCWD semantics */
+    (void)flags;
+    if (!pathname) { errno = EFAULT; return -1; }
+
+    /* For F_OK (existence check) or any mode check, try to open */
+    int fd = open(pathname, O_RDONLY);
+    if (fd < 0) {
+        /* errno already set by open */
+        return -1;
+    }
+    close(fd);
+    return 0;
+}
+
+/* ============================================================================
+ * memfd_create — create anonymous file in memory
+ * ============================================================================
+ * dash uses this as an optimisation for here-documents (redir.c).
+ * xv6 doesn't support it; return -1/ENOSYS so dash falls back to pipes.
+ */
+int memfd_create(const char *name, unsigned int flags)
+{
+    (void)name;
+    (void)flags;
+    errno = ENOSYS;
+    return -1;
 }
