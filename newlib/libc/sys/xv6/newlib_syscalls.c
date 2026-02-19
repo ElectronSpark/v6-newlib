@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/times.h>
+#include <sys/event.h>
 #include <errno.h>
 #include <unistd.h>
 #include <stdint.h>
@@ -102,6 +103,11 @@ extern int _xv6_getsockopt(int fd, int level, int optname,
 extern int _xv6_shutdown(int fd, int how) __asm__("__xv6_shutdown");
 extern int _xv6_getpeername(int fd, void *addr, void *addrlen) __asm__("__xv6_getpeername");
 extern int _xv6_getsockname(int fd, void *addr, void *addrlen) __asm__("__xv6_getsockname");
+
+/* kqueue syscalls (assembly stubs in usys.S, prefixed __xv6_*) */
+extern int _xv6_kqueue(void) __asm__("__xv6_kqueue");
+extern int _xv6_kevent_register(int kqfd, void *changelist, int nchanges) __asm__("__xv6_kevent_register");
+extern int _xv6_kevent_wait(int kqfd, void *eventlist, int nevents, int timeout_ms) __asm__("__xv6_kevent_wait");
 
 /* getrandom is provided by usys.S syscall stub */
 extern ssize_t getrandom(void *buf, size_t buflen, unsigned int flags);
@@ -1972,4 +1978,46 @@ struct servent *getservbyport(int port, const char *proto)
 {
     (void)port; (void)proto;
     return NULL;
+}
+
+/* ============================================================================
+ * kqueue - BSD event notification
+ * ============================================================================
+ *
+ * kqueue()          – create a new kqueue fd
+ * kevent_register() – register/modify/delete events
+ * kevent_wait()     – wait for triggered events
+ *
+ * Assembly stubs in usys.S provide __xv6_kqueue, __xv6_kevent_register,
+ * __xv6_kevent_wait.  Kernel returns negative errno on failure.
+ */
+
+int kqueue(void)
+{
+    int ret = _xv6_kqueue();
+    if (ret < 0) {
+        errno = -ret;
+        return -1;
+    }
+    return ret;
+}
+
+int kevent_register(int kqfd, struct kevent *changelist, int nchanges)
+{
+    int ret = _xv6_kevent_register(kqfd, (void *)changelist, nchanges);
+    if (ret < 0) {
+        errno = -ret;
+        return -1;
+    }
+    return ret;
+}
+
+int kevent_wait(int kqfd, struct kevent *eventlist, int nevents, int timeout_ms)
+{
+    int ret = _xv6_kevent_wait(kqfd, (void *)eventlist, nevents, timeout_ms);
+    if (ret < 0) {
+        errno = -ret;
+        return -1;
+    }
+    return ret;
 }

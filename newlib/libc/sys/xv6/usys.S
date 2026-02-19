@@ -110,3 +110,8 @@ SYSCALL_ALIAS(__xv6_poll, poll)
 SYSCALL_ALIAS(__xv6_fstat, fstat)
 SYSCALL_ALIAS(__xv6_stat, stat)
 SYSCALL_ALIAS(__xv6_lstat, lstat)
+
+# kqueue syscalls (private names — C wrappers are in newlib_syscalls.c)
+SYSCALL_ALIAS(__xv6_kqueue, kqueue)
+SYSCALL_ALIAS(__xv6_kevent_register, kevent_register)
+SYSCALL_ALIAS(__xv6_kevent_wait, kevent_wait)
