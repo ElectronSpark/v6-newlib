@@ -1073,6 +1073,8 @@ static void env_init(void) {
     if (!getenv("SHELL")) setenv("SHELL", "/sh", 1);
     if (!getenv("TERM"))  setenv("TERM", "xterm", 1);
     if (!getenv("PWD"))   setenv("PWD", "/", 1);
+    if (!getenv("LANG"))  setenv("LANG", "C.UTF-8", 1);
+    if (!getenv("LC_ALL")) setenv("LC_ALL", "C.UTF-8", 1);
     
     /* Python configuration */
     if (!getenv("PYTHONDONTWRITEBYTECODE")) setenv("PYTHONDONTWRITEBYTECODE", "1", 1);
