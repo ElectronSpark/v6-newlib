@@ -89,6 +89,7 @@ SYSCALL(getpgid)
 SYSCALL(setsid)
 SYSCALL(getsid)
 SYSCALL(sync)
+SYSCALL(netconf)
 
 # Network / socket syscalls (private names — C wrappers are in newlib_syscalls.c)
 SYSCALL_ALIAS(__xv6_socket, socket)
